@@ -106,5 +106,5 @@ jobs:
           git config user.email github-actions@github.com
 
           git add .last_version
-          git commit -m "Update built version"
+          git commit -m "Update built version: ${{ steps.version.outputs.LATEST_VERSION }}"
           git push
