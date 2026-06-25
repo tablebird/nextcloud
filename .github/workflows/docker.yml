@@ -92,8 +92,8 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and Push Image
-        if: steps.resolve.outputs.BUILD_MODE == 'manual' || (steps.resolve.outputs.BUILD_MODE == 'auto' && steps.compare.outputs.BUILD == 'true')
+      - name: Build and Push Image (manual)
+        if: steps.resolve.outputs.BUILD_MODE == 'manual'
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -103,6 +103,22 @@ jobs:
             NEXTCLOUD_VERSION=${{ steps.resolve.outputs.VERSION }}
           tags: |
             ${{ env.IMAGE_NAME }}:${{ steps.resolve.outputs.VERSION }}
+          platforms: |
+            linux/amd64
+            linux/arm64
+
+      - name: Build and Push Image (auto)
+        if: steps.resolve.outputs.BUILD_MODE == 'auto' && steps.compare.outputs.BUILD == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          pull: true
+          build-args: |
+            NEXTCLOUD_VERSION=${{ steps.resolve.outputs.VERSION }}
+          tags: |
+            ${{ env.IMAGE_NAME }}:${{ steps.resolve.outputs.VERSION }}
+            ${{ env.IMAGE_NAME }}:latest
           platforms: |
             linux/amd64
             linux/arm64
