@@ -5,6 +5,11 @@ on:
     - cron: '0 3 * * *'
 
   workflow_dispatch:
+    inputs:
+      version:
+        description: 'Manual Nextcloud FPM version to build (for example: 31.0.6-fpm). Leave empty to use the scheduled auto-build flow.'
+        required: false
+        type: string
 
 jobs:
   build:
@@ -21,20 +26,28 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Get Latest Nextcloud FPM Version
-        id: version
+      - name: Resolve Version to Build
+        id: resolve
         run: |
-          TAG=$(curl -s https://hub.docker.com/v2/repositories/library/nextcloud/tags?page_size=100 | \
-            jq -r '.results[].name' | \
-            grep -E '^[0-9]+\.[0-9]+\.[0-9]+-fpm$' | \
-            sort -V | \
-            tail -n 1)
+          if [ -n "${{ github.event.inputs.version }}" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+            BUILD_MODE="manual"
+          else
+            VERSION=$(curl -s https://hub.docker.com/v2/repositories/library/nextcloud/tags?page_size=100 | \
+              jq -r '.results[].name' | \
+              grep -E '^[0-9]+\.[0-9]+\.[0-9]+-fpm$' | \
+              sort -V | \
+              tail -n 1)
+            BUILD_MODE="auto"
+          fi
 
-          echo "LATEST_VERSION=$TAG" >> $GITHUB_OUTPUT
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+          echo "BUILD_MODE=$BUILD_MODE" >> $GITHUB_OUTPUT
 
-          echo "Detected version: $TAG"
+          echo "Resolved version: $VERSION"
 
       - name: Read Last Built Version
+        if: steps.resolve.outputs.BUILD_MODE == 'auto'
         id: last
         run: |
           if [ -f .last_version ]; then
@@ -48,30 +61,31 @@ jobs:
           echo "Last version: $VERSION"
 
       - name: Compare Versions
+        if: steps.resolve.outputs.BUILD_MODE == 'auto'
         id: compare
         run: |
-          if [ "${{ steps.version.outputs.LATEST_VERSION }}" != "${{ steps.last.outputs.LAST_VERSION }}" ]; then
+          if [ "${{ steps.resolve.outputs.VERSION }}" != "${{ steps.last.outputs.LAST_VERSION }}" ]; then
             echo "BUILD=true" >> $GITHUB_OUTPUT
           else
             echo "BUILD=false" >> $GITHUB_OUTPUT
           fi
 
       - name: Stop if No New Version
-        if: steps.compare.outputs.BUILD == 'false'
+        if: steps.resolve.outputs.BUILD_MODE == 'auto' && steps.compare.outputs.BUILD == 'false'
         run: |
           echo "No new version detected"
           exit 0
 
       - name: Set up QEMU
-        if: steps.compare.outputs.BUILD == 'true'
+        if: steps.resolve.outputs.BUILD_MODE == 'manual' || (steps.resolve.outputs.BUILD_MODE == 'auto' && steps.compare.outputs.BUILD == 'true')
         uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
-        if: steps.compare.outputs.BUILD == 'true'
+        if: steps.resolve.outputs.BUILD_MODE == 'manual' || (steps.resolve.outputs.BUILD_MODE == 'auto' && steps.compare.outputs.BUILD == 'true')
         uses: docker/setup-buildx-action@v3
 
       - name: Login to GHCR
-        if: steps.compare.outputs.BUILD == 'true'
+        if: steps.resolve.outputs.BUILD_MODE == 'manual' || (steps.resolve.outputs.BUILD_MODE == 'auto' && steps.compare.outputs.BUILD == 'true')
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -79,32 +93,31 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and Push Image
-        if: steps.compare.outputs.BUILD == 'true'
+        if: steps.resolve.outputs.BUILD_MODE == 'manual' || (steps.resolve.outputs.BUILD_MODE == 'auto' && steps.compare.outputs.BUILD == 'true')
         uses: docker/build-push-action@v6
         with:
           context: .
           push: true
           pull: true
           build-args: |
-            NEXTCLOUD_VERSION=${{ steps.version.outputs.LATEST_VERSION }}
+            NEXTCLOUD_VERSION=${{ steps.resolve.outputs.VERSION }}
           tags: |
-            ${{ env.IMAGE_NAME }}:${{ steps.version.outputs.LATEST_VERSION }}
-            ${{ env.IMAGE_NAME }}:latest
+            ${{ env.IMAGE_NAME }}:${{ steps.resolve.outputs.VERSION }}
           platforms: |
             linux/amd64
             linux/arm64
 
       - name: Save Current Version
-        if: steps.compare.outputs.BUILD == 'true'
+        if: steps.resolve.outputs.BUILD_MODE == 'auto' && steps.compare.outputs.BUILD == 'true'
         run: |
-          echo "${{ steps.version.outputs.LATEST_VERSION }}" > .last_version
+          echo "${{ steps.resolve.outputs.VERSION }}" > .last_version
 
       - name: Commit Version File
-        if: steps.compare.outputs.BUILD == 'true'
+        if: steps.resolve.outputs.BUILD_MODE == 'auto' && steps.compare.outputs.BUILD == 'true'
         run: |
           git config user.name github-actions
           git config user.email github-actions@github.com
 
           git add .last_version
-          git commit -m "Update built version: ${{ steps.version.outputs.LATEST_VERSION }}"
+          git commit -m "Update built version: ${{ steps.resolve.outputs.VERSION }}"
           git push
