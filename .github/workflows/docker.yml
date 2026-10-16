@@ -15,6 +15,10 @@ jobs:
   build:
     runs-on: ubuntu-latest
 
+    outputs:
+      version: ${{ steps.resolve.outputs.VERSION }}
+      publish: ${{ steps.publish.outputs.ENABLED }}
+
     permissions:
       contents: write
       packages: write
@@ -68,6 +72,15 @@ jobs:
             echo "BUILD=true" >> $GITHUB_OUTPUT
           else
             echo "BUILD=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Determine whether to publish
+        id: publish
+        run: |
+          if [ "${{ steps.resolve.outputs.BUILD_MODE }}" = "manual" ] || [ "${{ steps.compare.outputs.BUILD }}" = "true" ]; then
+            echo "ENABLED=true" >> $GITHUB_OUTPUT
+          else
+            echo "ENABLED=false" >> $GITHUB_OUTPUT
           fi
 
       - name: Stop if No New Version
@@ -137,3 +150,13 @@ jobs:
           git add .last_version
           git commit -m "Update built version: ${{ steps.resolve.outputs.VERSION }}"
           git push
+
+  publish-dockerhub:
+    needs: build
+    if: needs.build.outputs.publish == 'true'
+    permissions:
+      packages: read
+    uses: ./.github/workflows/dockerhub.yml
+    with:
+      version: ${{ needs.build.outputs.version }}
+    secrets: inherit
